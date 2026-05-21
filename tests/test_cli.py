@@ -55,6 +55,47 @@ templates:
     assert "todo 1" in capsys.readouterr().out
 
 
+def test_cli_dispatch_subprocess_command(tmp_path, capsys):
+    db = tmp_path / "tasks.sqlite3"
+    body = tmp_path / "body.txt"
+    body.write_text("Review one safe local note.", encoding="utf-8")
+
+    assert main(["init", "--db", str(db)]) == 0
+    assert (
+        main(
+            [
+                "enqueue",
+                "--db",
+                str(db),
+                "--title",
+                "Review local note",
+                "--body-file",
+                str(body),
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "dispatch",
+                "--db",
+                str(db),
+                "--max-workers",
+                "1",
+                "--backend",
+                "subprocess",
+                "--command",
+                "python -c 'import sys; print(sys.argv[1])' {task_id}",
+            ]
+        )
+        == 0
+    )
+    assert main(["status", "--db", str(db)]) == 0
+    assert main(["dispatch", "--db", str(db), "--max-workers", "1", "--backend", "dry-run"]) == 0
+    assert '"started"' in capsys.readouterr().out
+
+
 def test_cli_fails_closed_on_bad_template(tmp_path, capsys):
     path = tmp_path / "bad.yaml"
     path.write_text("templates: [{slug: Bad, title: A, body: B}]", encoding="utf-8")

@@ -59,7 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch.add_argument("--db", required=True)
     dispatch.add_argument("--max-workers", type=int, default=1)
     dispatch.add_argument("--backend", choices=["dry-run", "subprocess"], default="dry-run")
-    dispatch.add_argument("--command")
+    dispatch.add_argument("--command", dest="worker_command")
     dispatch.add_argument("--timeout", type=int, default=60)
 
     status = sub.add_parser("status")
@@ -121,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
             store = init_store(args.db)
             result = dispatch_ready(
                 store,
-                DispatchPolicy(args.max_workers, args.backend, args.command, args.timeout),
+                DispatchPolicy(args.max_workers, args.backend, args.worker_command, args.timeout),
             )
             store.close()
             print(
