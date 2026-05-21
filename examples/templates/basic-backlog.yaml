@@ -1,0 +1,28 @@
+templates:
+  - slug: docs-refresh
+    title: "Refresh docs section ${sequence}"
+    body: "Review one documentation page and write a short improvement note."
+    role: writer
+    lane: docs
+    priority: 20
+    tags: [docs, quality]
+    acceptance:
+      - "The note names the page and the suggested edit."
+  - slug: test-hardening
+    title: "Harden test case ${sequence}"
+    body: "Pick one flaky-looking test scenario and add a deterministic assertion."
+    role: tester
+    lane: quality
+    priority: 15
+    tags: [tests, quality]
+    acceptance:
+      - "The new assertion is deterministic."
+  - slug: dependency-audit
+    title: "Review dependency note ${sequence}"
+    body: "Check one dependency for version pin clarity and document the reason."
+    role: maintainer
+    lane: maintenance
+    priority: 5
+    tags: [maintenance]
+    acceptance:
+      - "The note explains whether the pin is still useful."
