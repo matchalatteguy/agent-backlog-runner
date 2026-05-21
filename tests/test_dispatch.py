@@ -19,7 +19,11 @@ def test_subprocess_dispatch_records_completion(tmp_path):
     task = store.create_task(title="A", body="Body")
     result = dispatch_ready(
         store,
-        DispatchPolicy(max_concurrent_workers=1, backend="subprocess", command="python -c 'print("ok {task_id}")'"),
+        DispatchPolicy(
+            max_concurrent_workers=1,
+            backend="subprocess",
+            command="python -c \"print('ok {task_id}')\"",
+        ),
     )
     assert result.started == (task.id,)
     assert store.get_task(task.id).status == TaskStatus.DONE

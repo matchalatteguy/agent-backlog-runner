@@ -21,5 +21,9 @@ def test_mark_and_heartbeat_are_visible(tmp_path):
     assert updated is not None
     assert updated.status == TaskStatus.RUNNING
     assert updated.heartbeat_at is not None
-    assert [event.event_type for event in store.events(task.id, limit=3)] == ["heartbeat", "dispatched", "created"]
+    assert [event.event_type for event in store.events(task.id, limit=3)] == [
+        "heartbeat",
+        "dispatched",
+        "created",
+    ]
     store.close()

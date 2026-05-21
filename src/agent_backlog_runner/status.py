@@ -21,7 +21,9 @@ class StatusSnapshot:
     recent_events: tuple[TaskEvent, ...]
 
 
-def get_status_snapshot(store: TaskStore, stale_after: int = 1800, event_limit: int = 10) -> StatusSnapshot:
+def get_status_snapshot(
+    store: TaskStore, stale_after: int = 1800, event_limit: int = 10
+) -> StatusSnapshot:
     tasks = store.list_tasks()
     counts = {status.value: 0 for status in TaskStatus}
     now = int(time.time())

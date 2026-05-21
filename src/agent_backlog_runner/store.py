@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-import secrets
 import sqlite3
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS scheduler_state (
   value TEXT NOT NULL,
   updated_at INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_tasks_status_priority ON tasks(status, priority DESC, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_tasks_status_priority
+ON tasks(status, priority DESC, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_events_task_id ON task_events(task_id, id DESC);
 """
 
@@ -97,7 +98,7 @@ class TaskStore:
 
     def new_task_id(self) -> str:
         while True:
-            task_id = "task_" + secrets.token_hex(6)
+            task_id = "task_" + uuid.uuid4().hex[:12]
             if self.get_task(task_id) is None:
                 return task_id
 
@@ -148,15 +149,24 @@ class TaskStore:
         return task
 
     def _add_event_unlocked(
-        self, task_id: str, event_type: str, message: str = "", payload: dict[str, Any] | None = None
+        self,
+        task_id: str,
+        event_type: str,
+        message: str = "",
+        payload: dict[str, Any] | None = None,
     ) -> None:
         self.conn.execute(
-            "INSERT INTO task_events(task_id,event_type,message,payload,created_at) VALUES (?,?,?,?,?)",
+            """INSERT INTO task_events(task_id,event_type,message,payload,created_at)
+            VALUES (?,?,?,?,?)""",
             (task_id, event_type, message, json.dumps(payload or {}, sort_keys=True), _now()),
         )
 
     def add_event(
-        self, task_id: str, event_type: str, message: str = "", payload: dict[str, Any] | None = None
+        self,
+        task_id: str,
+        event_type: str,
+        message: str = "",
+        payload: dict[str, Any] | None = None,
     ) -> None:
         require_safe_task_id(task_id)
         with self.conn:
@@ -170,12 +180,18 @@ class TaskStore:
     def list_tasks(self, statuses: tuple[TaskStatus, ...] = ()) -> list[TaskRecord]:
         if statuses:
             placeholders = ",".join("?" for _ in statuses)
+            query = (
+                f"SELECT * FROM tasks WHERE status IN ({placeholders}) "
+                "ORDER BY priority DESC, created_at ASC"
+            )
             rows = self.conn.execute(
-                f"SELECT * FROM tasks WHERE status IN ({placeholders}) ORDER BY priority DESC, created_at ASC",
+                query,
                 tuple(status.value for status in statuses),
             ).fetchall()
         else:
-            rows = self.conn.execute("SELECT * FROM tasks ORDER BY priority DESC, created_at ASC").fetchall()
+            rows = self.conn.execute(
+                "SELECT * FROM tasks ORDER BY priority DESC, created_at ASC"
+            ).fetchall()
         return [_task_from_row(row) for row in rows]
 
     def mark_task(self, task_id: str, status: TaskStatus, message: str = "") -> None:
@@ -213,7 +229,9 @@ class TaskStore:
         if lanes:
             where += " AND lane IN (" + ",".join("?" for _ in lanes) + ")"
             params.extend(lanes)
-        row = self.conn.execute(f"SELECT COUNT(*) AS count FROM tasks WHERE {where}", params).fetchone()
+        row = self.conn.execute(
+            f"SELECT COUNT(*) AS count FROM tasks WHERE {where}", params
+        ).fetchone()
         return int(row["count"])
 
     def title_exists(self, title: str) -> bool:
@@ -228,7 +246,8 @@ class TaskStore:
         else:
             require_safe_task_id(task_id)
             rows = self.conn.execute(
-                "SELECT * FROM task_events WHERE task_id=? ORDER BY id DESC LIMIT ?", (task_id, limit)
+                "SELECT * FROM task_events WHERE task_id=? ORDER BY id DESC LIMIT ?",
+                (task_id, limit),
             ).fetchall()
         return [_event_from_row(row) for row in rows]
 
@@ -242,7 +261,9 @@ class TaskStore:
         with self.conn:
             self.conn.execute(
                 """INSERT INTO scheduler_state(key,value,updated_at) VALUES (?,?,?)
-                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at""",
+                ON CONFLICT(key) DO UPDATE SET
+                value=excluded.value,
+                updated_at=excluded.updated_at""",
                 (key, str(value), _now()),
             )
 

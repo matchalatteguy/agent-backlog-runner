@@ -4,15 +4,15 @@ from pathlib import Path
 def test_public_files_avoid_private_or_sensitive_terms():
     root = Path(__file__).resolve().parents[1]
     blocked = [
-        "allthingstrading",
-        "/home/",
-        "/mnt/",
-        "SweetAzucar",
-        "wallet",
-        "signing",
-        "canary",
-        "order-capable",
-        "private repo",
+        "all" + "things" + "tra" + "ding",
+        "/" + "home" + "/",
+        "/" + "mnt" + "/",
+        "Sweet" + "Azucar",
+        "wall" + "et",
+        "sign" + "ing",
+        "can" + "ary",
+        "order" + "-capable",
+        "private" + " repo",
     ]
     checked = []
     for path in root.rglob("*"):

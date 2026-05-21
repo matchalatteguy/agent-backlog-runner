@@ -57,13 +57,17 @@ def plan_backlog(
         sequence = state.cursor + attempts + 1
         title, body = render_template(template, {"sequence": sequence, "slug": template.slug})
         if not policy.avoid_duplicates or not store.title_exists(title):
-            planned.append(_planned_from_template(template, title, body, "queue depth below minimum"))
+            planned.append(
+                _planned_from_template(template, title, body, "queue depth below minimum")
+            )
         index += 1
         attempts += 1
     return BacklogPlan(active_depth, policy.target_queue_depth, tuple(planned), dry_run=dry_run)
 
 
-def _planned_from_template(template: TaskTemplate, title: str, body: str, reason: str) -> PlannedTask:
+def _planned_from_template(
+    template: TaskTemplate, title: str, body: str, reason: str
+) -> PlannedTask:
     return PlannedTask(
         template_slug=template.slug,
         title=title,
@@ -93,6 +97,6 @@ def apply_backlog_plan(
             )
         )
     if plan.planned:
-        start = (state.cursor if state else store.get_state("cursor", 0))
+        start = state.cursor if state else store.get_state("cursor", 0)
         store.set_state("cursor", start + len(plan.planned))
     return created

@@ -6,7 +6,8 @@ from agent_backlog_runner.templates import load_template_catalog
 
 def _catalog(tmp_path):
     path = tmp_path / "templates.yaml"
-    path.write_text("""
+    path.write_text(
+        """
 templates:
   - slug: docs-refresh
     title: "Refresh docs ${sequence}"
@@ -18,7 +19,9 @@ templates:
     body: "Review tests"
     lane: quality
     tags: [tests]
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
     return load_template_catalog(path)
 
 

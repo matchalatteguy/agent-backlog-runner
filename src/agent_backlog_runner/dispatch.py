@@ -55,6 +55,8 @@ def dispatch_ready(store: TaskStore, policy: DispatchPolicy) -> DispatchResult:
         if completed.returncode == 0:
             store.mark_task(task.id, TaskStatus.DONE, completed.stdout[-500:])
         else:
-            store.mark_task(task.id, TaskStatus.FAILED, (completed.stderr or completed.stdout)[-500:])
+            store.mark_task(
+                task.id, TaskStatus.FAILED, (completed.stderr or completed.stdout)[-500:]
+            )
         started.append(task.id)
     return DispatchResult(tuple(started))

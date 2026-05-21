@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from .dispatch import DispatchPolicy, dispatch_ready
-from .models import BacklogPolicy, TaskStatus
+from .models import BacklogPolicy
 from .reports import plan_to_json, snapshot_to_json, snapshot_to_table
 from .scheduler import apply_backlog_plan, plan_backlog
 from .status import get_status_snapshot
@@ -91,7 +91,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "enqueue":
             store = init_store(args.db)
             body = Path(args.body_file).read_text(encoding="utf-8") if args.body_file else args.body
-            task = store.create_task(title=args.title, body=body, lane=args.lane, priority=args.priority)
+            task = store.create_task(
+                title=args.title, body=body, lane=args.lane, priority=args.priority
+            )
             store.close()
             print(task.id)
             return 0
@@ -105,7 +107,9 @@ def main(argv: list[str] | None = None) -> int:
                 lanes=tuple(args.lane),
                 tags=tuple(args.tag),
             )
-            plan = plan_backlog(store, catalog, policy, dry_run=args.scheduler_command == "plan" or args.dry_run)
+            plan = plan_backlog(
+                store, catalog, policy, dry_run=args.scheduler_command == "plan" or args.dry_run
+            )
             if args.scheduler_command == "run" and not args.dry_run:
                 created = apply_backlog_plan(store, plan)
                 print("created " + str(len(created)))
@@ -120,13 +124,19 @@ def main(argv: list[str] | None = None) -> int:
                 DispatchPolicy(args.max_workers, args.backend, args.command, args.timeout),
             )
             store.close()
-            print(json.dumps({"started": list(result.started), "skipped_reason": result.skipped_reason}))
+            print(
+                json.dumps(
+                    {"started": list(result.started), "skipped_reason": result.skipped_reason}
+                )
+            )
             return 0
         if args.command == "status":
             store = init_store(args.db)
             snapshot = get_status_snapshot(store)
             store.close()
-            print(snapshot_to_json(snapshot) if args.format == "json" else snapshot_to_table(snapshot))
+            print(
+                snapshot_to_json(snapshot) if args.format == "json" else snapshot_to_table(snapshot)
+            )
             return 0
         if args.command == "events":
             store = init_store(args.db)

@@ -19,7 +19,9 @@ _REQUIRED_FIELDS = {"slug", "title", "body"}
 class TemplateCatalog:
     templates: tuple[TaskTemplate, ...]
 
-    def select(self, lanes: tuple[str, ...] = (), tags: tuple[str, ...] = ()) -> tuple[TaskTemplate, ...]:
+    def select(
+        self, lanes: tuple[str, ...] = (), tags: tuple[str, ...] = ()
+    ) -> tuple[TaskTemplate, ...]:
         selected = []
         tag_set = set(tags)
         for template in self.templates:
@@ -66,7 +68,9 @@ def parse_template(item: dict[str, Any]) -> TaskTemplate:
     slug = require_safe_slug(str(item["slug"]))
     lane = require_safe_slug(str(item.get("lane", "default")), field="lane")
     role = require_safe_slug(str(item.get("role", "agent")), field="role")
-    tags = tuple(require_safe_slug(tag, field="tag") for tag in _tuple_of_strings(item.get("tags"), "tags"))
+    tags = tuple(
+        require_safe_slug(tag, field="tag") for tag in _tuple_of_strings(item.get("tags"), "tags")
+    )
     acceptance = _tuple_of_strings(item.get("acceptance"), "acceptance")
     try:
         priority = int(item.get("priority", 0))
@@ -96,4 +100,6 @@ def load_template_catalog(path: str | Path) -> TemplateCatalog:
 
 def render_template(template: TaskTemplate, variables: dict[str, object]) -> tuple[str, str]:
     safe_vars = {key: str(value) for key, value in variables.items()}
-    return Template(template.title).safe_substitute(safe_vars), Template(template.body).safe_substitute(safe_vars)
+    return Template(template.title).safe_substitute(safe_vars), Template(
+        template.body
+    ).safe_substitute(safe_vars)
