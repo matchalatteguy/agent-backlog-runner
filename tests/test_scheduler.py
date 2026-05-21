@@ -57,3 +57,20 @@ def test_lane_filter_selects_expected_templates(tmp_path):
     )
     assert plan.planned[0].lane == "quality"
     store.close()
+
+
+def test_duplicate_skips_advance_cursor_to_next_template(tmp_path):
+    store = init_store(tmp_path / "tasks.sqlite3")
+    catalog = _catalog(tmp_path)
+    store.create_task(title="Refresh docs 1", body="already queued")
+
+    plan = plan_backlog(
+        store,
+        catalog,
+        BacklogPolicy(min_queue_depth=2, target_queue_depth=3, max_enqueue_per_cycle=1),
+    )
+
+    assert [item.title for item in plan.planned] == ["Harden tests 2"]
+    apply_backlog_plan(store, plan)
+    assert store.get_state("cursor") == 2
+    store.close()

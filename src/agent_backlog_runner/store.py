@@ -205,11 +205,11 @@ class TaskStore:
             TaskStatus.TODO: "queued",
         }[status]
         with self.conn:
-            self.conn.execute(
+            cursor = self.conn.execute(
                 "UPDATE tasks SET status=?, updated_at=? WHERE id=?",
                 (status.value, _now(), task_id),
             )
-            if self.conn.total_changes == 0:
+            if cursor.rowcount == 0:
                 raise KeyError(task_id)
             self._add_event_unlocked(task_id, event_type, message, {})
 
@@ -217,10 +217,12 @@ class TaskStore:
         require_safe_task_id(task_id)
         now = _now()
         with self.conn:
-            self.conn.execute(
+            cursor = self.conn.execute(
                 "UPDATE tasks SET heartbeat_at=?, updated_at=? WHERE id=?",
                 (now, now, task_id),
             )
+            if cursor.rowcount == 0:
+                raise KeyError(task_id)
             self._add_event_unlocked(task_id, "heartbeat", "heartbeat", payload or {})
 
     def active_depth(self, lanes: tuple[str, ...] = ()) -> int:

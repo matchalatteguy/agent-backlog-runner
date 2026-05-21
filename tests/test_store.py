@@ -27,3 +27,27 @@ def test_mark_and_heartbeat_are_visible(tmp_path):
         "created",
     ]
     store.close()
+
+
+def test_missing_task_updates_fail_closed_without_events(tmp_path):
+    store = init_store(tmp_path / "tasks.sqlite3")
+    existing = store.create_task(title="Existing task", body="Body")
+
+    missing_id = "task_deadbeef0000"
+    try:
+        store.mark_task(missing_id, TaskStatus.DONE, "should fail")
+    except KeyError as exc:
+        assert exc.args == (missing_id,)
+    else:  # pragma: no cover - assertion message is the useful failure
+        raise AssertionError("mark_task should reject unknown task ids")
+
+    try:
+        store.record_heartbeat(missing_id, {"step": 1})
+    except KeyError as exc:
+        assert exc.args == (missing_id,)
+    else:  # pragma: no cover
+        raise AssertionError("record_heartbeat should reject unknown task ids")
+
+    assert [event.event_type for event in store.events(limit=10)] == ["created"]
+    assert store.get_task(existing.id) is not None
+    store.close()

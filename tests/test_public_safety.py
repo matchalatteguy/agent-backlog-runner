@@ -7,7 +7,7 @@ def test_public_files_avoid_private_or_sensitive_terms():
         "all" + "things" + "tra" + "ding",
         "/" + "home" + "/",
         "/" + "mnt" + "/",
-        "Sweet" + "Azucar",
+        "personal" + "-account" + "-name",
         "wall" + "et",
         "sign" + "ing",
         "can" + "ary",

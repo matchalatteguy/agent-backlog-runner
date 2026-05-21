@@ -25,6 +25,7 @@ class BacklogPlan:
     target_depth: int
     planned: tuple[PlannedTask, ...]
     dry_run: bool = True
+    cursor_advance: int = 0
 
 
 @dataclass(frozen=True)
@@ -62,7 +63,13 @@ def plan_backlog(
             )
         index += 1
         attempts += 1
-    return BacklogPlan(active_depth, policy.target_queue_depth, tuple(planned), dry_run=dry_run)
+    return BacklogPlan(
+        active_depth,
+        policy.target_queue_depth,
+        tuple(planned),
+        dry_run=dry_run,
+        cursor_advance=attempts,
+    )
 
 
 def _planned_from_template(
@@ -98,5 +105,5 @@ def apply_backlog_plan(
         )
     if plan.planned:
         start = state.cursor if state else store.get_state("cursor", 0)
-        store.set_state("cursor", start + len(plan.planned))
+        store.set_state("cursor", start + plan.cursor_advance)
     return created

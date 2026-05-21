@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 import subprocess
 from dataclasses import dataclass
 
@@ -45,8 +46,7 @@ def dispatch_ready(store: TaskStore, policy: DispatchPolicy) -> DispatchResult:
         command = policy.command.format(task_id=task.id)
         store.mark_task(task.id, TaskStatus.RUNNING, f"started: {command}")
         completed = subprocess.run(
-            command,
-            shell=True,
+            shlex.split(command),
             check=False,
             capture_output=True,
             text=True,
