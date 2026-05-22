@@ -10,8 +10,15 @@ from typing import Any
 from .models import TaskEvent, TaskRecord, TaskStatus
 from .safety import require_safe_slug, require_safe_task_id
 
+SCHEMA_VERSION = 1
+
 SCHEMA = """
 PRAGMA foreign_keys = ON;
+CREATE TABLE IF NOT EXISTS schema_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
@@ -89,12 +96,33 @@ class TaskStore:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
 
+    def __enter__(self) -> TaskStore:
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self.close()
+
     def close(self) -> None:
         self.conn.close()
 
     def init_schema(self) -> None:
         with self.conn:
             self.conn.executescript(SCHEMA)
+            self.conn.execute(
+                """INSERT INTO schema_meta(key,value,updated_at) VALUES ('schema_version',?,?)
+                ON CONFLICT(key) DO UPDATE SET
+                value=excluded.value,
+                updated_at=excluded.updated_at""",
+                (str(SCHEMA_VERSION), _now()),
+            )
+
+    def schema_version(self) -> int:
+        row = self.conn.execute(
+            "SELECT value FROM schema_meta WHERE key='schema_version'"
+        ).fetchone()
+        if row is None:
+            return 0
+        return int(row["value"])
 
     def new_task_id(self) -> str:
         while True:

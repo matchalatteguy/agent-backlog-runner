@@ -16,7 +16,7 @@ Use this mode first when checking a new backlog.
 
 ## Subprocess backend
 
-The `subprocess` backend runs a local command template once for each selected task:
+The `subprocess` backend runs a local command template once for each selected task. It is synchronous: the CLI process waits for each selected command to finish or time out before moving to the next selected task.
 
 ```bash
 uv run agent-backlog dispatch \
@@ -27,7 +27,9 @@ uv run agent-backlog dispatch \
   --timeout 60
 ```
 
-`{task_id}` is replaced with the selected task id. The command runs on the local machine. If it exits with code `0`, the task becomes `done`; otherwise it becomes `failed` and the final output is kept in the event log.
+`{task_id}`, `{title}`, `{lane}`, `{role}`, `{priority}`, and `{workdir}` are available as explicit placeholders. The template is split with shell-style quoting before placeholder values are substituted, so task metadata cannot create extra subprocess argv tokens. Unknown placeholders fail before any subprocess starts, which keeps command templates predictable. The command runs on the local machine, using the task's `workdir` when one is set. If it exits with code `0`, the task becomes `done`; otherwise it becomes `failed` and the final output is kept in the event log.
+
+Tasks may carry their own `command` and `workdir`, either through the Python API or `agent-backlog enqueue --command ... --workdir ...`. A dispatch-level `--command` overrides per-task commands when you want one temporary worker command for the whole run.
 
 ## Concurrency cap
 

@@ -2,12 +2,20 @@
 
 This walkthrough proves the core loop without credentials, network calls, or long-running services. It uses the synthetic templates in `examples/templates/basic-backlog.yaml` and writes demo state under `.agent-backlog/`, which is ignored by version control.
 
+The goal is to see the reusable abstraction in action:
+
+```text
+validated templates -> dry-run plan -> SQLite tasks -> optional local worker -> status/events
+```
+
 ## 0. Install developer dependencies
 
 ```bash
 uv sync --extra dev
 uv run agent-backlog --help
 ```
+
+If `uv` is unavailable, see `docs/troubleshooting.md`.
 
 ## 1. Initialize a local task store
 
@@ -20,6 +28,8 @@ Expected output:
 ```text
 initialized .agent-backlog/tasks.sqlite3
 ```
+
+You can omit `--db` when `AGENT_BACKLOG_DB` is set or when you want the default `.agent-backlog/tasks.sqlite3` in the current directory.
 
 ## 2. Validate the template catalog
 
@@ -76,15 +86,17 @@ uv run agent-backlog status --db .agent-backlog/tasks.sqlite3
 uv run agent-backlog events --db .agent-backlog/tasks.sqlite3 --limit 10
 ```
 
-You should see `todo` tasks and recent `created` events.
+You should see `todo` tasks and recent `created` events. Generated task ids and event ids will differ between runs.
 
-## Optional: dispatch one harmless local worker
+## 6. Optional: dispatch one harmless local worker
 
 The default dispatch backend is dry-run:
 
 ```bash
 uv run agent-backlog dispatch --db .agent-backlog/tasks.sqlite3 --max-workers 2
 ```
+
+Dry-run dispatch records preview events and does not execute a subprocess.
 
 To run the demo subprocess worker:
 
@@ -102,6 +114,20 @@ The example worker only prints the task id. After it exits, check the queue agai
 uv run agent-backlog status --db .agent-backlog/tasks.sqlite3
 uv run agent-backlog events --db .agent-backlog/tasks.sqlite3 --limit 20
 ```
+
+The subprocess backend is synchronous: the CLI waits for each selected local command to finish or time out.
+
+## 7. Try an environment default
+
+For a longer shell session, set the database path once:
+
+```bash
+export AGENT_BACKLOG_DB="$PWD/.agent-backlog/tasks.sqlite3"
+uv run agent-backlog status
+uv run agent-backlog events --limit 5
+```
+
+`--db` still wins when both are supplied.
 
 ## Start over
 

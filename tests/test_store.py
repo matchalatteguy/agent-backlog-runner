@@ -1,11 +1,12 @@
 from agent_backlog_runner.models import TaskStatus
-from agent_backlog_runner.store import init_store
+from agent_backlog_runner.store import SCHEMA_VERSION, init_store
 
 
 def test_schema_initializes_idempotently(tmp_path):
     db = tmp_path / "tasks.sqlite3"
     store = init_store(db)
     store.init_schema()
+    assert store.schema_version() == SCHEMA_VERSION
     task = store.create_task(title="Write note", body="Body", lane="docs", tags=("docs",))
     assert task.status == TaskStatus.TODO
     assert store.events(task.id)[0].event_type == "created"
@@ -51,3 +52,18 @@ def test_missing_task_updates_fail_closed_without_events(tmp_path):
     assert [event.event_type for event in store.events(limit=10)] == ["created"]
     assert store.get_task(existing.id) is not None
     store.close()
+
+
+def test_store_context_manager_closes_after_schema_init(tmp_path):
+    db = tmp_path / "tasks.sqlite3"
+    with init_store(db) as store:
+        task = store.create_task(title="Scoped task", body="Body")
+        assert store.get_task(task.id) is not None
+        assert store.schema_version() == SCHEMA_VERSION
+
+    try:
+        store.list_tasks()
+    except Exception as exc:
+        assert "closed" in str(exc).lower()
+    else:  # pragma: no cover
+        raise AssertionError("context manager should close the SQLite connection")

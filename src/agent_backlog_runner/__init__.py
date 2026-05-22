@@ -1,17 +1,28 @@
 """Local SQLite backlog runner for bounded agent task queues."""
 
-from .dispatch import DispatchPolicy, DispatchResult, dispatch_ready
+from .config import DEFAULT_DB_PATH, ENV_DB_PATH, RunnerConfig, resolve_db_path
+from .dispatch import (
+    DispatchPolicy,
+    DispatchResult,
+    dispatch_ready,
+    render_command_argv,
+    render_command_template,
+)
 from .models import BacklogPolicy, TaskEvent, TaskRecord, TaskStatus, TaskTemplate
 from .scheduler import BacklogPlan, SchedulerState, apply_backlog_plan, plan_backlog
 from .status import StatusSnapshot, get_status_snapshot
-from .store import TaskStore, init_store
+from .store import SCHEMA_VERSION, TaskStore, init_store
 from .templates import TemplateCatalog, load_template_catalog
 
 __all__ = [
     "BacklogPlan",
     "BacklogPolicy",
+    "DEFAULT_DB_PATH",
     "DispatchPolicy",
     "DispatchResult",
+    "ENV_DB_PATH",
+    "RunnerConfig",
+    "SCHEMA_VERSION",
     "SchedulerState",
     "StatusSnapshot",
     "TaskEvent",
@@ -26,4 +37,7 @@ __all__ = [
     "init_store",
     "load_template_catalog",
     "plan_backlog",
+    "render_command_argv",
+    "render_command_template",
+    "resolve_db_path",
 ]
