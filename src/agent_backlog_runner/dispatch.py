@@ -66,7 +66,10 @@ def render_command_argv(template: str, task: TaskRecord) -> tuple[str, ...]:
     """
 
     fields = _command_fields(task)
-    return tuple(_render_template_part(part, fields) for part in shlex.split(template))
+    argv = tuple(_render_template_part(part, fields) for part in shlex.split(template))
+    if not argv or not argv[0]:
+        raise ValueError("worker command must contain an executable")
+    return argv
 
 
 def render_command_template(template: str, task: TaskRecord) -> str:
@@ -100,20 +103,53 @@ def dispatch_ready(store: TaskStore, policy: DispatchPolicy) -> DispatchResult:
             started.append(task.id)
             continue
         argv = _command_argv_for_task(task, policy)
-        store.mark_task(task.id, TaskStatus.RUNNING, f"started: {shlex.join(argv)}")
-        completed = subprocess.run(
-            list(argv),
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=policy.timeout_seconds,
-            cwd=Path(task.workdir) if task.workdir else None,
-        )
+        if not store.claim_task(
+            task.id,
+            policy.max_concurrent_workers,
+            f"started: {shlex.join(argv)}",
+        ):
+            continue
+        started.append(task.id)
+        try:
+            completed = subprocess.run(
+                list(argv),
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=policy.timeout_seconds,
+                cwd=Path(task.workdir) if task.workdir else None,
+            )
+        except subprocess.TimeoutExpired:
+            store.mark_task(
+                task.id,
+                TaskStatus.FAILED,
+                f"worker timed out after {policy.timeout_seconds}s",
+                expected_status=TaskStatus.RUNNING,
+            )
+            continue
+        except OSError as exc:
+            store.mark_task(
+                task.id,
+                TaskStatus.FAILED,
+                f"worker could not start: {exc}",
+                expected_status=TaskStatus.RUNNING,
+            )
+            continue
         if completed.returncode == 0:
-            store.mark_task(task.id, TaskStatus.DONE, completed.stdout[-500:])
+            store.mark_task(
+                task.id,
+                TaskStatus.DONE,
+                completed.stdout[-500:],
+                expected_status=TaskStatus.RUNNING,
+            )
         else:
             store.mark_task(
-                task.id, TaskStatus.FAILED, (completed.stderr or completed.stdout)[-500:]
+                task.id,
+                TaskStatus.FAILED,
+                f"worker exited {completed.returncode}: "
+                + (completed.stderr or completed.stdout)[-500:],
+                expected_status=TaskStatus.RUNNING,
             )
-        started.append(task.id)
     return DispatchResult(tuple(started))

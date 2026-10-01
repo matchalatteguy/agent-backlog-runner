@@ -31,9 +31,22 @@ uv run agent-backlog dispatch \
 
 Tasks may carry their own `command` and `workdir`, either through the Python API or `agent-backlog enqueue --command ... --workdir ...`. A dispatch-level `--command` overrides per-task commands when you want one temporary worker command for the whole run.
 
+Timeouts, spawn errors, and invalid working directories also mark the task
+`failed`; they do not leave it `running` or abort the remaining selected batch.
+Only the direct worker process is terminated on timeout. A command that starts
+its own children must manage those children's cleanup.
+
 ## Concurrency cap
 
-`--max-workers` caps total running work. If the store already has enough `running` tasks, dispatch skips new starts and reports that the cap was reached.
+`--max-workers` caps total running work and the size of this dispatch batch. Tasks
+run sequentially inside the CLI process. Each start reserves its task and a
+capacity slot in one SQLite transaction, so competing local dispatchers cannot
+start the same task. Use the same cap across dispatchers.
+
+Final updates only replace `running`: an operator's cancellation or intervening
+status change is preserved. Changing a status does not terminate a process. If
+the CLI is killed, a task can remain `running`; inspect `stale` and its output
+before requeueing it.
 
 ## Command guidance
 
@@ -45,4 +58,6 @@ Keep worker commands simple:
 - set a timeout that matches the expected task size;
 - inspect `status` and `events` after dispatch.
 
-Long-running service management and distributed worker pools are outside this MVP.
+For detached session management and contained workspaces, see
+[Local Agent Task Runtime](https://github.com/matchalatteguy/local-agent-task-runtime).
+Long-running services and distributed worker pools are outside this package's scope.

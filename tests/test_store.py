@@ -1,3 +1,8 @@
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+
+import pytest
+
 from agent_backlog_runner.models import TaskStatus
 from agent_backlog_runner.store import SCHEMA_VERSION, init_store
 
@@ -67,3 +72,30 @@ def test_store_context_manager_closes_after_schema_init(tmp_path):
         assert "closed" in str(exc).lower()
     else:  # pragma: no cover
         raise AssertionError("context manager should close the SQLite connection")
+
+
+def test_two_dispatchers_cannot_claim_same_task(tmp_path):
+    db = tmp_path / "tasks.sqlite3"
+    with init_store(db) as store:
+        task = store.create_task(title="once", body="")
+    barrier = Barrier(2)
+
+    def claim():
+        with init_store(db) as store:
+            barrier.wait(timeout=5)
+            return store.claim_task(task.id, 1, "worker started")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: claim(), range(2)))
+    assert sorted(results) == [False, True]
+    with init_store(db) as store:
+        assert [event.event_type for event in store.events(task.id)] == ["dispatched", "created"]
+
+
+def test_newer_schema_is_rejected_without_downgrading(tmp_path):
+    db = tmp_path / "tasks.sqlite3"
+    with init_store(db) as store:
+        store.conn.execute("UPDATE schema_meta SET value='999' WHERE key='schema_version'")
+        store.conn.commit()
+    with pytest.raises(ValueError, match="newer"):
+        init_store(db)

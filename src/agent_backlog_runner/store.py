@@ -4,6 +4,8 @@ import json
 import sqlite3
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -106,6 +108,11 @@ class TaskStore:
         self.conn.close()
 
     def init_schema(self) -> None:
+        exists = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_meta'"
+        ).fetchone()
+        if exists and self.schema_version() > SCHEMA_VERSION:
+            raise ValueError("database schema is newer than this package supports")
         with self.conn:
             self.conn.executescript(SCHEMA)
             self.conn.execute(
@@ -123,6 +130,16 @@ class TaskStore:
         if row is None:
             return 0
         return int(row["value"])
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """An atomic write boundary shared by task, event, and scheduler writes."""
+        if self.conn.in_transaction:
+            yield
+            return
+        with self.conn:
+            self.conn.execute("BEGIN IMMEDIATE")
+            yield
 
     def new_task_id(self) -> str:
         while True:
@@ -150,7 +167,7 @@ class TaskStore:
         for tag in tags:
             require_safe_slug(tag, field="tag")
         now = _now()
-        with self.conn:
+        with self.transaction():
             self.conn.execute(
                 """INSERT INTO tasks
                 (id,title,body,status,priority,lane,tags,role,workdir,command,created_at,updated_at,heartbeat_at)
@@ -197,7 +214,7 @@ class TaskStore:
         payload: dict[str, Any] | None = None,
     ) -> None:
         require_safe_task_id(task_id)
-        with self.conn:
+        with self.transaction():
             self._add_event_unlocked(task_id, event_type, message, payload)
 
     def get_task(self, task_id: str) -> TaskRecord | None:
@@ -222,7 +239,14 @@ class TaskStore:
             ).fetchall()
         return [_task_from_row(row) for row in rows]
 
-    def mark_task(self, task_id: str, status: TaskStatus, message: str = "") -> None:
+    def mark_task(
+        self,
+        task_id: str,
+        status: TaskStatus,
+        message: str = "",
+        *,
+        expected_status: TaskStatus | None = None,
+    ) -> bool:
         require_safe_task_id(task_id)
         event_type = {
             TaskStatus.RUNNING: "dispatched",
@@ -232,7 +256,12 @@ class TaskStore:
             TaskStatus.CANCELLED: "cancelled",
             TaskStatus.TODO: "queued",
         }[status]
-        with self.conn:
+        with self.transaction():
+            task = self.get_task(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            if expected_status is not None and task.status != expected_status:
+                return False
             cursor = self.conn.execute(
                 "UPDATE tasks SET status=?, updated_at=? WHERE id=?",
                 (status.value, _now(), task_id),
@@ -240,11 +269,33 @@ class TaskStore:
             if cursor.rowcount == 0:
                 raise KeyError(task_id)
             self._add_event_unlocked(task_id, event_type, message, {})
+        return True
+
+    def claim_task(self, task_id: str, max_running: int, message: str) -> bool:
+        """Claim a TODO task and a capacity slot before executing its command."""
+        require_safe_task_id(task_id)
+        with self.transaction():
+            task = self.get_task(task_id)
+            if task is None or task.status != TaskStatus.TODO:
+                return False
+            running = self.conn.execute(
+                "SELECT COUNT(*) FROM tasks WHERE status=?",
+                (TaskStatus.RUNNING.value,),
+            ).fetchone()[0]
+            if running >= max_running:
+                return False
+            now = _now()
+            self.conn.execute(
+                "UPDATE tasks SET status=?, updated_at=?, heartbeat_at=? WHERE id=?",
+                (TaskStatus.RUNNING.value, now, now, task_id),
+            )
+            self._add_event_unlocked(task_id, "dispatched", message, {})
+        return True
 
     def record_heartbeat(self, task_id: str, payload: dict[str, Any] | None = None) -> None:
         require_safe_task_id(task_id)
         now = _now()
-        with self.conn:
+        with self.transaction():
             cursor = self.conn.execute(
                 "UPDATE tasks SET heartbeat_at=?, updated_at=? WHERE id=?",
                 (now, now, task_id),
@@ -288,7 +339,7 @@ class TaskStore:
 
     def set_state(self, key: str, value: int) -> None:
         require_safe_slug(key, field="state key")
-        with self.conn:
+        with self.transaction():
             self.conn.execute(
                 """INSERT INTO scheduler_state(key,value,updated_at) VALUES (?,?,?)
                 ON CONFLICT(key) DO UPDATE SET
@@ -300,7 +351,11 @@ class TaskStore:
 
 def init_store(path: str | Path) -> TaskStore:
     store = TaskStore(path)
-    store.init_schema()
+    try:
+        store.init_schema()
+    except Exception:
+        store.close()
+        raise
     return store
 
 
