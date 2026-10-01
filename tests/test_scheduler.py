@@ -1,6 +1,6 @@
 import pytest
 
-from agent_backlog_runner.models import BacklogPolicy
+from agent_backlog_runner.models import BacklogPolicy, TaskStatus
 from agent_backlog_runner.scheduler import apply_backlog_plan, plan_backlog
 from agent_backlog_runner.store import init_store
 from agent_backlog_runner.templates import load_template_catalog
@@ -100,6 +100,27 @@ def test_constant_titles_are_deduplicated_within_plan(tmp_path):
     with init_store(tmp_path / "tasks.sqlite3") as store:
         plan = plan_backlog(store, load_template_catalog(path), BacklogPolicy(target_queue_depth=3))
         assert [item.title for item in plan.planned] == ["Constant title"]
+
+
+def test_duplicate_only_plan_advances_cursor_so_later_cycle_can_recover(tmp_path):
+    path = tmp_path / "templates.yaml"
+    path.write_text(
+        "templates:\n  - slug: work\n    title: Work ${sequence}\n    body: Check docs\n"
+    )
+    with init_store(tmp_path / "tasks.sqlite3") as store:
+        for index in range(1, 4):
+            task = store.create_task(title=f"Work {index}", body="")
+            store.mark_task(task.id, TaskStatus.DONE)
+        catalog = load_template_catalog(path)
+        policy = BacklogPolicy(target_queue_depth=1)
+        duplicate_plan = plan_backlog(store, catalog, policy, dry_run=False)
+        assert duplicate_plan.planned == ()
+        assert duplicate_plan.cursor_advance == 3
+        assert apply_backlog_plan(store, duplicate_plan) == []
+        assert store.get_state("cursor") == 3
+        next_plan = plan_backlog(store, catalog, policy, dry_run=False)
+        assert [item.title for item in next_plan.planned] == ["Work 4"]
+        assert len(apply_backlog_plan(store, next_plan)) == 1
 
 
 def test_plan_cannot_be_applied_twice(tmp_path):

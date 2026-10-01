@@ -5,9 +5,13 @@
 - Claim a task and a capacity slot atomically before a subprocess starts.
 - Record worker timeouts and spawn errors as `failed` instead of leaving tasks
   permanently `running`; continue the rest of the selected batch.
+- Decode worker output as UTF-8 with replacement for malformed bytes, preserving
+  successful completion and later tasks in the batch.
 - Preserve operator status changes made while a worker is running.
 - Deduplicate titles within a plan, reject stale plans, and apply tasks, events,
   and the scheduler cursor in one transaction.
+- Advance the cursor when a cycle finds only previously used titles, allowing
+  later cycles to move past them and replenish the queue.
 - Refuse to overwrite a database's unsupported future schema version.
 - Add a documentation audit demo that executes real workers, wheel smoke checks,
   and CI.

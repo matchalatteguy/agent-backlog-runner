@@ -107,6 +107,8 @@ A zero exit code marks the task `done`. Nonzero exits, timeouts, missing binarie
 and invalid workdirs mark it `failed`; later tasks in the selected batch still
 run. `--max-workers` bounds the batch against current running work. Commands run
 one at a time inside the CLI process, even when the limit is larger than one.
+Output snippets are decoded as UTF-8 with replacement characters for invalid
+bytes, so binary or differently encoded output cannot strand the batch.
 
 Each task can have its own `--command` and `--workdir` through `enqueue`. A
 command supplied to `dispatch` overrides those commands. Supported placeholders

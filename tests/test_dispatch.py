@@ -160,6 +160,32 @@ def test_missing_executable_does_not_leave_running_task(tmp_path):
         assert "worker could not start" in store.events(task.id)[0].message
 
 
+def test_non_utf8_worker_output_does_not_strand_batch(tmp_path):
+    with init_store(tmp_path / "tasks.sqlite3") as store:
+        binary = store.create_task(
+            title="binary output",
+            body="",
+            priority=2,
+            command=shlex.join(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys; sys.stdout.buffer.write(bytes([255]))",
+                ]
+            ),
+        )
+        following = store.create_task(
+            title="next task",
+            body="",
+            command=shlex.join([sys.executable, "-c", "print('next')"]),
+        )
+        result = dispatch_ready(store, DispatchPolicy(2, "subprocess"))
+        assert result.started == (binary.id, following.id)
+        assert store.get_task(binary.id).status == TaskStatus.DONE
+        assert store.events(binary.id)[0].message == "\ufffd"
+        assert store.get_task(following.id).status == TaskStatus.DONE
+
+
 def test_completion_preserves_operator_cancellation(tmp_path, monkeypatch):
     import subprocess
 

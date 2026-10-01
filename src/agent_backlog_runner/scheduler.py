@@ -100,7 +100,7 @@ def _planned_from_template(
 def apply_backlog_plan(
     store: TaskStore, plan: BacklogPlan, state: SchedulerState | None = None
 ) -> list[TaskRecord]:
-    if plan.dry_run or not plan.planned:
+    if plan.dry_run or (not plan.planned and plan.cursor_advance == 0):
         return []
     created = []
     with store.transaction():

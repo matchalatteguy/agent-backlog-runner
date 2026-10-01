@@ -116,6 +116,8 @@ def dispatch_ready(store: TaskStore, policy: DispatchPolicy) -> DispatchResult:
                 check=False,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=policy.timeout_seconds,
                 cwd=Path(task.workdir) if task.workdir else None,
             )
