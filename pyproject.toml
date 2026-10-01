@@ -1,11 +1,12 @@
 [project]
 name = "agent-backlog-runner"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local SQLite backlog runner for bounded agent task queues"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
-authors = [{ name = "Agent Backlog Runner contributors" }]
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "matchalatteguy" }]
 dependencies = ["PyYAML>=6.0"]
 keywords = ["agents", "sqlite", "backlog", "scheduler", "cli"]
 classifiers = [
@@ -15,7 +16,12 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
 ]
+
+[project.urls]
+Repository = "https://github.com/matchalatteguy/agent-backlog-runner"
+Issues = "https://github.com/matchalatteguy/agent-backlog-runner/issues"
 
 [project.scripts]
 agent-backlog = "agent_backlog_runner.cli:main"

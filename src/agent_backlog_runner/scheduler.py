@@ -26,6 +26,9 @@ class BacklogPlan:
     planned: tuple[PlannedTask, ...]
     dry_run: bool = True
     cursor_advance: int = 0
+    cursor_start: int = 0
+    lanes: tuple[str, ...] = ()
+    avoid_duplicates: bool = True
 
 
 @dataclass(frozen=True)
@@ -50,6 +53,7 @@ def plan_backlog(
     if not candidates or needed <= 0:
         return BacklogPlan(active_depth, policy.target_queue_depth, (), dry_run=dry_run)
     planned: list[PlannedTask] = []
+    planned_titles: set[str] = set()
     index = state.cursor
     attempts = 0
     max_attempts = max(len(candidates) * 3, needed)
@@ -57,10 +61,13 @@ def plan_backlog(
         template = candidates[index % len(candidates)]
         sequence = state.cursor + attempts + 1
         title, body = render_template(template, {"sequence": sequence, "slug": template.slug})
-        if not policy.avoid_duplicates or not store.title_exists(title):
+        if not policy.avoid_duplicates or (
+            title not in planned_titles and not store.title_exists(title)
+        ):
             planned.append(
                 _planned_from_template(template, title, body, "queue depth below minimum")
             )
+            planned_titles.add(title)
         index += 1
         attempts += 1
     return BacklogPlan(
@@ -69,6 +76,9 @@ def plan_backlog(
         tuple(planned),
         dry_run=dry_run,
         cursor_advance=attempts,
+        cursor_start=state.cursor,
+        lanes=policy.lanes,
+        avoid_duplicates=policy.avoid_duplicates,
     )
 
 
@@ -90,20 +100,28 @@ def _planned_from_template(
 def apply_backlog_plan(
     store: TaskStore, plan: BacklogPlan, state: SchedulerState | None = None
 ) -> list[TaskRecord]:
+    if plan.dry_run or not plan.planned:
+        return []
     created = []
-    for item in plan.planned:
-        created.append(
-            store.create_task(
-                title=item.title,
-                body=item.body,
-                priority=item.priority,
-                lane=item.lane,
-                tags=item.tags,
-                role=item.role,
-                event_message=f"planned from template {item.template_slug}: {item.reason}",
+    with store.transaction():
+        cursor = store.get_state("cursor", 0)
+        if cursor != plan.cursor_start or (state and state.cursor != plan.cursor_start):
+            raise ValueError("backlog plan is stale: scheduler cursor changed; plan again")
+        if store.active_depth(plan.lanes) != plan.active_depth:
+            raise ValueError("backlog plan is stale: queue depth changed; plan again")
+        for item in plan.planned:
+            if plan.avoid_duplicates and store.title_exists(item.title):
+                raise ValueError("backlog plan is stale: task title already exists; plan again")
+            created.append(
+                store.create_task(
+                    title=item.title,
+                    body=item.body,
+                    priority=item.priority,
+                    lane=item.lane,
+                    tags=item.tags,
+                    role=item.role,
+                    event_message=f"planned from template {item.template_slug}: {item.reason}",
+                )
             )
-        )
-    if plan.planned:
-        start = state.cursor if state else store.get_state("cursor", 0)
-        store.set_state("cursor", start + plan.cursor_advance)
+        store.set_state("cursor", cursor + plan.cursor_advance)
     return created

@@ -47,7 +47,9 @@ uv run agent-backlog scheduler plan \
   --json
 ```
 
-The preview has no side effects. It does not create tasks, advance state, create files, or start workers.
+The preview creates no tasks or events, does not advance scheduler state, and
+starts no workers. The CLI initializes the selected SQLite database on first
+use, so a preview can create that database file.
 
 ## Apply the plan
 
@@ -63,6 +65,12 @@ uv run agent-backlog scheduler run \
 ```
 
 The CLI prints the number of tasks created. Each created task gets a durable event row, so `agent-backlog events` can explain what happened.
+
+Tasks, events, and cursor advancement commit together. A partial write failure
+rolls the whole plan back. Plans include the cursor and queue depth they were
+based on; applying a stale or already applied plan fails. Generate a fresh plan
+after another scheduler or queue edit. Applying a plan marked `dry_run=True`
+through the Python API creates nothing; use `dry_run=False` to apply it.
 
 ## Determinism
 
