@@ -3,12 +3,16 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import asdict
+from importlib.metadata import version
 from pathlib import Path
 
+from .batches import enqueue_batch, load_batch_manifest
 from .config import ENV_DB_PATH, resolve_db_path
 from .dispatch import DispatchPolicy, dispatch_ready
 from .models import BacklogPolicy, TaskStatus
-from .reports import plan_to_json, snapshot_to_json, snapshot_to_table
+from .recovery import recover_task
+from .reports import plan_to_json, snapshot_to_json, snapshot_to_table, write_queue_report
 from .scheduler import apply_backlog_plan, plan_backlog
 from .status import get_status_snapshot
 from .store import init_store
@@ -30,6 +34,12 @@ def _task_to_dict(task) -> dict[str, object]:
         "created_at": task.created_at,
         "updated_at": task.updated_at,
         "heartbeat_at": task.heartbeat_at,
+        "argv": list(task.command_argv) if task.command_argv else None,
+        "attempt_count": task.attempt_count,
+        "max_attempts": task.max_attempts,
+        "not_before": task.not_before,
+        "timeout_seconds": task.timeout_seconds,
+        "retry_backoff_seconds": task.retry_backoff_seconds,
     }
 
 
@@ -72,10 +82,14 @@ def _add_db_argument(parser: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent-backlog")
+    parser.add_argument("--version", action="version", version=version("agent-backlog-runner"))
     sub = parser.add_subparsers(dest="command", required=True)
 
     init = sub.add_parser("init")
     _add_db_argument(init)
+
+    demo = sub.add_parser("demo", help="run the repository-check repair and resume walkthrough")
+    demo.add_argument("--output", type=Path, default=Path(".agent-backlog/maintenance-demo"))
 
     enqueue = sub.add_parser("enqueue")
     _add_db_argument(enqueue)
@@ -88,6 +102,21 @@ def build_parser() -> argparse.ArgumentParser:
     enqueue.add_argument("--priority", type=int, default=0)
     enqueue.add_argument("--command", dest="task_command")
     enqueue.add_argument("--workdir")
+    enqueue.add_argument("--max-attempts", type=int, default=3)
+    enqueue.add_argument("--retry-backoff", type=float, default=1)
+    enqueue.add_argument("--timeout", type=float)
+
+    batch = sub.add_parser("batch", help="load a finite, repeatable command manifest")
+    batch_sub = batch.add_subparsers(dest="batch_command", required=True)
+    for name in ("validate", "load"):
+        cmd = batch_sub.add_parser(name)
+        _add_db_argument(cmd)
+        cmd.add_argument("manifest")
+        cmd.add_argument("--root")
+        cmd.add_argument(
+            "--python", help="interpreter substituted for the exact argv token {python}"
+        )
+        cmd.add_argument("--run-id", default="default")
 
     list_cmd = sub.add_parser("list")
     _add_db_argument(list_cmd)
@@ -138,7 +167,50 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch.add_argument("--max-workers", type=int, default=1)
     dispatch.add_argument("--backend", choices=["dry-run", "subprocess"], default="dry-run")
     dispatch.add_argument("--command", dest="worker_command")
-    dispatch.add_argument("--timeout", type=int, default=60)
+    dispatch.add_argument("--timeout", type=float, default=60)
+    dispatch.add_argument(
+        "--drain",
+        action="store_true",
+        help="finish the queued snapshot, filling slots as workers exit",
+    )
+    dispatch.add_argument("--log-root", type=Path)
+    dispatch.add_argument("--max-log-bytes", type=int, default=1048576)
+
+    retry = sub.add_parser("retry", help="explicitly schedule a failed or cancelled task")
+    _add_db_argument(retry)
+    retry.add_argument("task_id", nargs="?")
+    retry.add_argument(
+        "--failed", action="store_true", help="schedule all failed tasks with remaining attempts"
+    )
+
+    recover = sub.add_parser(
+        "recover", help="abandon stale work only after its recorded processes are gone"
+    )
+    _add_db_argument(recover)
+    recover.add_argument("task_id")
+    recover.add_argument("--after", default="30m")
+    recover.add_argument("--acknowledge-unknown", action="store_true")
+
+    cancel = sub.add_parser("cancel", help="ask the owning dispatcher to stop a task")
+    _add_db_argument(cancel)
+    cancel.add_argument("task_id")
+
+    attempts = sub.add_parser("attempts", help="inspect durable attempt outcomes and log locations")
+    _add_db_argument(attempts)
+    attempts.add_argument("task_id", nargs="?")
+    attempts.add_argument("--format", choices=["table", "json"], default="table")
+
+    logs = sub.add_parser("logs", help="read a bounded tail of a worker's retained output")
+    _add_db_argument(logs)
+    logs.add_argument("task_id")
+    logs.add_argument("--attempt", type=int)
+    logs.add_argument("--stream", choices=["stdout", "stderr"], default="stdout")
+    logs.add_argument("--tail", type=int, default=4096)
+
+    report = sub.add_parser("report", help="write an inspectable JSON or Markdown queue report")
+    _add_db_argument(report)
+    report.add_argument("--json-out", type=Path)
+    report.add_argument("--md-out", type=Path)
 
     status = sub.add_parser("status")
     _add_db_argument(status)
@@ -147,6 +219,7 @@ def build_parser() -> argparse.ArgumentParser:
     events = sub.add_parser("events")
     _add_db_argument(events)
     events.add_argument("--limit", type=int, default=20)
+    events.add_argument("--task-id")
     events.add_argument("--format", choices=["table", "json"], default="table")
 
     stale = sub.add_parser("stale")
@@ -160,6 +233,93 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     db_path = resolve_db_path(args.db) if hasattr(args, "db") else None
     try:
+        if args.command == "demo":
+            from .maintenance import run_demo
+
+            print(json.dumps(run_demo(args.output), indent=2))
+            return 0
+        if args.command == "report":
+            with init_store(db_path) as store:
+                write_queue_report(store, json_out=args.json_out, md_out=args.md_out)
+            return 0
+        if args.command == "batch":
+            manifest = load_batch_manifest(args.manifest, root=args.root, python=args.python)
+            if args.batch_command == "validate":
+                print(json.dumps(asdict(manifest), indent=2))
+            else:
+                with init_store(db_path) as store:
+                    records = enqueue_batch(store, manifest, run_id=args.run_id)
+                    print(json.dumps([_task_to_dict(task) for task in records], indent=2))
+            return 0
+        if args.command == "retry":
+            if bool(args.task_id) == args.failed:
+                raise ValueError("choose one task_id or --failed")
+            with init_store(db_path) as store:
+                tasks = (
+                    store.list_tasks((TaskStatus.FAILED,))
+                    if args.failed
+                    else [store.get_task(args.task_id)]
+                )
+                scheduled, skipped = [], []
+                for task in tasks:
+                    if task is None:
+                        raise KeyError(args.task_id)
+                    try:
+                        scheduled.append(_task_to_dict(store.retry_task(task.id)))
+                    except ValueError as exc:
+                        if not args.failed:
+                            raise
+                        skipped.append({"id": task.id, "reason": str(exc)})
+                print(json.dumps({"scheduled": scheduled, "skipped": skipped}, indent=2))
+            return 0
+        if args.command == "recover":
+            with init_store(db_path) as store:
+                recover_task(
+                    store,
+                    args.task_id,
+                    stale_after=_duration_seconds(args.after),
+                    acknowledge_unknown=args.acknowledge_unknown,
+                )
+            print(f"recovered {args.task_id}; inspect outputs, then retry explicitly")
+            return 0
+        if args.command == "cancel":
+            with init_store(db_path) as store:
+                store.request_cancel(args.task_id)
+            print(
+                f"cancellation requested for {args.task_id}; attempts shows when the worker stops"
+            )
+            return 0
+        if args.command == "attempts":
+            with init_store(db_path) as store:
+                attempts = store.attempts(args.task_id)
+            if args.format == "json":
+                print(json.dumps(attempts, indent=2))
+            else:
+                print("task             attempt  outcome       exit  stdout / stderr")
+                for attempt in attempts:
+                    print(
+                        f"{attempt['task_id']} {attempt['attempt_no']:7}  {attempt['outcome']:12}  "
+                        f"{str(attempt['exit_code']):4}  {attempt['stdout_path']} / "
+                        f"{attempt['stderr_path']}"
+                    )
+            return 0
+        if args.command == "logs":
+            if not 1 <= args.tail <= 67108864:
+                raise ValueError("--tail must be from 1 to 67108864 bytes")
+            with init_store(db_path) as store:
+                attempts = store.attempts(args.task_id)
+            matches = [
+                item
+                for item in attempts
+                if args.attempt is None or item["attempt_no"] == args.attempt
+            ]
+            if not matches or not matches[0][args.stream + "_path"]:
+                raise ValueError("no retained log for the selected attempt")
+            with Path(matches[0][args.stream + "_path"]).open("rb") as handle:
+                handle.seek(0, 2)
+                handle.seek(max(0, handle.tell() - args.tail))
+                print(handle.read(args.tail).decode("utf-8", "replace"), end="")
+            return 0
         if args.command == "init":
             store = init_store(db_path)
             store.close()
@@ -181,6 +341,9 @@ def main(argv: list[str] | None = None) -> int:
                 priority=args.priority,
                 command=args.task_command,
                 workdir=args.workdir,
+                max_attempts=args.max_attempts,
+                retry_backoff_seconds=args.retry_backoff,
+                timeout_seconds=args.timeout,
             )
             store.close()
             print(task.id)
@@ -199,6 +362,7 @@ def main(argv: list[str] | None = None) -> int:
             store = init_store(db_path)
             task = store.get_task(args.task_id)
             events = store.events(args.task_id, limit=20) if task is not None else []
+            attempts = store.attempts(args.task_id) if task is not None else []
             store.close()
             if task is None:
                 raise KeyError(args.task_id)
@@ -208,6 +372,7 @@ def main(argv: list[str] | None = None) -> int:
                         {
                             "task": _task_to_dict(task),
                             "events": [_event_to_dict(event) for event in events],
+                            "attempts": attempts,
                         },
                         indent=2,
                         sort_keys=True,
@@ -220,6 +385,13 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "mark":
             store = init_store(db_path)
+            task = store.get_task(args.task_id)
+            if task is None:
+                raise KeyError(args.task_id)
+            if any(attempt["finished_at"] is None for attempt in store.attempts(args.task_id)):
+                raise ValueError("managed attempt is active; use cancel to request a stop")
+            if args.status == "todo" and task.attempt_count:
+                raise ValueError("use retry to respect attempt budgets and backoff")
             store.mark_task(args.task_id, TaskStatus(args.status), args.message)
             store.close()
             print(f"marked {args.task_id} {args.status}")
@@ -257,15 +429,19 @@ def main(argv: list[str] | None = None) -> int:
             store = init_store(db_path)
             result = dispatch_ready(
                 store,
-                DispatchPolicy(args.max_workers, args.backend, args.worker_command, args.timeout),
+                DispatchPolicy(
+                    args.max_workers,
+                    args.backend,
+                    args.worker_command,
+                    args.timeout,
+                    args.drain,
+                    args.log_root,
+                    args.max_log_bytes,
+                ),
             )
             store.close()
-            print(
-                json.dumps(
-                    {"started": list(result.started), "skipped_reason": result.skipped_reason}
-                )
-            )
-            return 0
+            print(json.dumps(asdict(result)))
+            return 1 if result.failed or result.cancelled else (2 if result.skipped_reason else 0)
         if args.command == "status":
             store = init_store(db_path)
             snapshot = get_status_snapshot(store)
@@ -276,7 +452,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "events":
             store = init_store(db_path)
-            events = store.events(limit=args.limit)
+            events = store.events(args.task_id, limit=args.limit)
             store.close()
             if args.format == "json":
                 print(
@@ -310,6 +486,12 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"{item.task.id} age={item.age_seconds}s")
             return 0
         return 2
+    except KeyboardInterrupt:
+        print(
+            "dispatcher interrupted; inspect attempts and retry unfinished tasks explicitly",
+            file=sys.stderr,
+        )
+        return 130
     except Exception as exc:  # fail closed for CLI users
         print(f"error: {exc}", file=sys.stderr)
         return 1

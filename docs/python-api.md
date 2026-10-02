@@ -16,7 +16,7 @@ with init_store(".agent-backlog/tasks.sqlite3") as store:
     print(store.schema_version())
 ```
 
-`init_store(path)` creates parent directories when needed, opens SQLite, initializes the schema idempotently, writes `schema_version=1`, and returns a `TaskStore`. Use it as a context manager or call `close()` when the script is done.
+`init_store(path)` creates parent directories when needed, opens SQLite, initializes/migrates to schema 2, and returns a `TaskStore`. Use it as a context manager or call `close()` when done. Schema-1 tasks/events remain intact; old running tasks need explicit inspection/recovery because their process identities are unknown.
 
 ## Create one task
 
@@ -119,7 +119,29 @@ print(result.started, result.skipped_reason)
 store.close()
 ```
 
-The built-in subprocess backend runs synchronously inside the calling process. It is suitable for short local workers and demos, not for a durable distributed worker fleet.
+The calling process stays open, while up to `max_concurrent_workers` subprocesses actually run concurrently. Set `drain=True` to consume the initial queued snapshot and fill slots as workers finish. Every selected attempt has durable history and capped per-stream log files. Process execution requires POSIX; this is a local coordinator, not a distributed worker fleet.
+
+## Finite batches and explicit retry
+
+```python
+from pathlib import Path
+from agent_backlog_runner import (
+    DispatchPolicy, dispatch_ready, enqueue_batch, init_store,
+    load_batch_manifest, write_queue_report,
+)
+
+manifest = load_batch_manifest("checks.yaml", root=".")
+with init_store(".agent-backlog/checks.sqlite3") as store:
+    tasks = enqueue_batch(store, manifest, run_id="release-check")
+    result = dispatch_ready(store, DispatchPolicy(2, "subprocess", drain=True))
+    for task_id in result.failed:
+        print(store.attempts(task_id))
+    write_queue_report(store, md_out=Path(".agent-backlog/report.md"))
+```
+
+After repairing inputs, `store.retry_task(task_id)` schedules another bounded attempt. `store.request_cancel(task_id)` asks the active coordinator to stop its own process; it does not signal a saved PID. `recover_task(store, task_id, stale_after=1800)` refuses known live owners/workers/groups and abandons stale uncertain work without requeueing it. Read [recovery semantics](batches-and-recovery.md) before using the optional unknown-identity acknowledgement.
+
+`create_task(command_argv=(...))` stores exact arguments without legacy string-template substitution. Optional `timeout_seconds`, `max_attempts`, and `retry_backoff_seconds` control bounded execution. The low-level `mark_task` and old `claim_task` APIs remain manual bookkeeping; prefer managed dispatch/retry/recovery for process work. Editing raw statuses does not bypass active-attempt claims or establish that side effects stopped.
 
 ## Status snapshots
 

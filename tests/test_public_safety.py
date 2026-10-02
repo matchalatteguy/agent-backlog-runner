@@ -17,7 +17,19 @@ def test_public_files_avoid_private_or_sensitive_terms():
     checked = []
     for path in root.rglob("*"):
         if path.is_file() and path.suffix not in {".pyc"} and ".git" not in path.parts:
-            if any(part in {".venv", ".pytest_cache", ".ruff_cache"} for part in path.parts):
+            if any(
+                part
+                in {
+                    ".venv",
+                    ".pytest_cache",
+                    ".ruff_cache",
+                    ".agent-backlog",
+                    ".wheel-smoke",
+                    "dist",
+                    "build",
+                }
+                for part in path.parts
+            ):
                 continue
             text = path.read_text(encoding="utf-8", errors="ignore")
             checked.append(path)

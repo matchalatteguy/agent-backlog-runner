@@ -45,6 +45,12 @@ class TaskRecord:
     created_at: int = 0
     updated_at: int = 0
     heartbeat_at: int | None = None
+    command_argv: tuple[str, ...] | None = None
+    attempt_count: int = 0
+    max_attempts: int = 3
+    retry_backoff_seconds: float = 1
+    timeout_seconds: float | None = None
+    not_before: float = 0
 
 
 @dataclass(frozen=True)

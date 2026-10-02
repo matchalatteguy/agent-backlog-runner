@@ -15,6 +15,27 @@ _ALLOWED_FIELDS = {"slug", "title", "body", "role", "priority", "lane", "tags", 
 _REQUIRED_FIELDS = {"slug", "title", "body"}
 
 
+def _unique_mapping(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON field: {key}")
+        result[key] = value
+    return result
+
+
+class _UniqueSafeLoader(yaml.SafeLoader):
+    def construct_mapping(self, node, deep=False):
+        mapping = super().construct_mapping(node, deep=deep)
+        seen = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in seen:
+                raise ValueError(f"duplicate YAML field: {key}")
+            seen.add(key)
+        return mapping
+
+
 @dataclass(frozen=True)
 class TemplateCatalog:
     templates: tuple[TaskTemplate, ...]
@@ -36,8 +57,8 @@ class TemplateCatalog:
 def _load_data(path: Path) -> Any:
     text = path.read_text(encoding="utf-8")
     if path.suffix.lower() == ".json":
-        return json.loads(text)
-    return yaml.safe_load(text)
+        return json.loads(text, object_pairs_hook=_unique_mapping)
+    return yaml.load(text, Loader=_UniqueSafeLoader)
 
 
 def _as_list(data: Any) -> list[dict[str, Any]]:

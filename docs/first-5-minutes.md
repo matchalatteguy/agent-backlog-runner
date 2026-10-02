@@ -115,7 +115,7 @@ uv run agent-backlog status --db .agent-backlog/tasks.sqlite3
 uv run agent-backlog events --db .agent-backlog/tasks.sqlite3 --limit 20
 ```
 
-The subprocess backend is synchronous: the CLI waits for each selected local command to finish or time out.
+The CLI waits for the selected batch, while commands run concurrently up to `--max-workers`. Add `--drain` for a finite queued snapshot that refills slots as workers finish. See the [repair/resume batch walkthrough](../README.md#install-and-try-the-repairresume-walkthrough).
 
 ## 7. Try an environment default
 
