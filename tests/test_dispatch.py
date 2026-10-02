@@ -186,17 +186,25 @@ def test_non_utf8_worker_output_does_not_strand_batch(tmp_path):
         assert store.get_task(following.id).status == TaskStatus.DONE
 
 
-def test_completion_preserves_operator_cancellation(tmp_path, monkeypatch):
-    import subprocess
+def test_completion_preserves_operator_cancellation(tmp_path):
+    from threading import Timer
 
-    with init_store(tmp_path / "tasks.sqlite3") as store:
-        task = store.create_task(title="cancelled", body="", command="worker")
+    db = tmp_path / "tasks.sqlite3"
+    with init_store(db) as store:
+        task = store.create_task(
+            title="cancelled",
+            body="",
+            command_argv=(sys.executable, "-c", "import time; time.sleep(10)"),
+        )
 
-        def complete_after_cancellation(*args, **kwargs):
-            store.mark_task(task.id, TaskStatus.CANCELLED, "operator cancelled")
-            return subprocess.CompletedProcess(args[0], returncode=0, stdout="ok", stderr="")
+        def cancel():
+            with init_store(db) as other:
+                other.request_cancel(task.id)
 
-        monkeypatch.setattr(subprocess, "run", complete_after_cancellation)
+        timer = Timer(0.2, cancel)
+        timer.start()
         dispatch_ready(store, DispatchPolicy(backend="subprocess"))
+        timer.join(timeout=5)
         assert store.get_task(task.id).status == TaskStatus.CANCELLED
+        assert store.attempts(task.id)[0]["outcome"] == "cancelled"
         assert store.events(task.id)[0].event_type == "cancelled"

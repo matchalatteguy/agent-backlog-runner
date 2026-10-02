@@ -1,14 +1,14 @@
 [project]
 name = "agent-backlog-runner"
-version = "0.2.0"
-description = "Local SQLite backlog runner for bounded agent task queues"
+version = "0.3.0"
+description = "Durable local command batches with bounded parallel workers, retries, and SQLite history"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "matchalatteguy" }]
 dependencies = ["PyYAML>=6.0"]
-keywords = ["agents", "sqlite", "backlog", "scheduler", "cli"]
+keywords = ["command-queue", "sqlite", "batch", "retry", "repository-maintenance", "cli"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "License :: OSI Approved :: MIT License",

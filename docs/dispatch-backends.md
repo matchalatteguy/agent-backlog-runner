@@ -1,63 +1,43 @@
 # Dispatch backends
 
-Dispatch turns ready `todo` tasks into local work. It is deliberately opt-in and bounded: nothing runs unless the caller chooses a backend and a worker command.
-
-## Dry-run backend
-
-The default backend is `dry-run`:
+The default `dry-run` backend records preview events and leaves tasks `todo`. Commands run only with `--backend subprocess`.
 
 ```bash
-uv run agent-backlog dispatch --db .agent-backlog/tasks.sqlite3 --max-workers 2
+agent-backlog dispatch --db .agent-backlog/checks.sqlite3 --max-workers 2 --drain
+agent-backlog dispatch --db .agent-backlog/checks.sqlite3 \
+  --backend subprocess --max-workers 2 --drain
 ```
 
-Dry-run dispatch records preview events and returns the task ids it would start. It does not execute subprocesses or change task status to `running`.
+## Concurrent bounded execution
 
-Use this mode first when checking a new backlog.
+The CLI stays open while selected commands run concurrently. A shared SQLite transaction reserves each task, attempt token, and capacity slot. Competing coordinators cannot execute the same queued task, and active coordinators must agree on `--max-workers`.
 
-## Subprocess backend
+Without `--drain`, dispatch selects at most the available number of ready tasks. Future scheduled retries do not block eligible work. With `--drain`, it takes a finite snapshot of queued tasks and refills its slots until that snapshot is consumed, waiting for its explicit retry due times. Newly enqueued work is left to a later invocation. Other coordinators or unrecovered attempts can prevent dispatch; the CLI reports the capacity reason rather than adopting their processes.
 
-The `subprocess` backend runs a local command template once for each selected task. It is synchronous: the CLI process waits for each selected command to finish or time out before moving to the next selected task.
+Tasks are selected by descending priority, then creation time and insertion order. Independent commands must not concurrently overwrite the same files. There is no DAG or lock manager for command side effects.
 
-```bash
-uv run agent-backlog dispatch \
-  --db .agent-backlog/tasks.sqlite3 \
-  --max-workers 1 \
-  --backend subprocess \
-  --command "bash examples/worker_echo.sh {task_id}" \
-  --timeout 60
-```
+## Command forms
 
-`{task_id}`, `{title}`, `{lane}`, `{role}`, `{priority}`, and `{workdir}` are available as explicit placeholders. The template is split with shell-style quoting before placeholder values are substituted, so task metadata cannot create extra subprocess argv tokens. Unknown placeholders fail before any subprocess starts, which keeps command templates predictable. The command runs on the local machine, using the task's `workdir` when one is set. If it exits with code `0`, the task becomes `done`; otherwise it becomes `failed` and the final output is kept in the event log.
+A batch's `argv` list is passed directly to `Popen`, with no shell. The exact manifest token `{python}` is resolved when loading the manifest. Legacy per-task `command` strings remain supported, with placeholders `{task_id}`, `{title}`, `{lane}`, `{role}`, `{priority}`, and `{workdir}`. Quoting is parsed before placeholder substitution, preserving each value as one argument. A dispatch `--command` overrides stored commands/argv.
 
-Tasks may carry their own `command` and `workdir`, either through the Python API or `agent-backlog enqueue --command ... --workdir ...`. A dispatch-level `--command` overrides per-task commands when you want one temporary worker command for the whole run.
+These commands are trusted local code. Do not interpolate untrusted text into shell or interpreter program arguments. Workers inherit the coordinator's environment and access, receive a closed stdin, and run in the recorded workdir. Commands requiring interactive input are unsuitable.
 
-Timeouts, spawn errors, and invalid working directories also mark the task
-`failed`; they do not leave it `running` or abort the remaining selected batch.
-Only the direct worker process is terminated on timeout. A command that starts
-its own children must manage those children's cleanup.
+## Timeouts, output, and cancellation
 
-## Concurrency cap
+Each task can override the dispatch timeout. Nonzero exits, timeouts, missing executables, and invalid workdirs become failed attempts. The remaining selected tasks continue. The coordinator reads both output streams concurrently into separate capped files; excess data is drained/discarded, and truncation is recorded.
 
-`--max-workers` caps total running work and the size of this dispatch batch. Tasks
-run sequentially inside the CLI process. Each start reserves its task and a
-capacity slot in one SQLite transaction, so competing local dispatchers cannot
-start the same task. Use the same cap across dispatchers.
+Cancel through `agent-backlog cancel TASK_ID --db ...`. The request is observed by the owning coordinator, which stops its own child process group. It does not signal a saved PID. Cancelled work retains its capacity slot until the attempt finishes.
 
-Final updates only replace `running`: an operator's cancellation or intervening
-status change is preserved. Changing a status does not terminate a process. If
-the CLI is killed, a task can remain `running`; inspect `stale` and its output
-before requeueing it.
+POSIX workers start in a new session. Cleanup sends TERM, allows a brief grace period, then KILL while the leader remains unreaped. This retains PID ownership during group signalling. On Darwin, a zombie-only group can return EPERM; the coordinator checks only that owned group's process states before treating that condition as already stopped. An actual permission denial with live members remains a cleanup error, and the attempt is left unfinished for inspection.
 
-## Command guidance
+Subprocess dispatch requires the default `SIGCHLD` handler and rejects ignored or custom handlers before claiming work. Embedding callers must not reap the dispatcher's children from another thread. Where `waitid(WNOWAIT)` is available, cleanup confirms child ownership before signalling; an already-reaped child leaves its attempt unfinished for inspection. The dispatcher never replaces a caller's signal handler.
 
-Keep worker commands simple:
+Where `waitid(WNOWAIT)` is available, normal completion is observed before reaping and remaining group members are cleaned up. Older macOS interpreters without it reap through `Popen.poll`; after that, the old group is never signalled because its PID could be reused. On those interpreters, commands must wait for their children before exiting. Escaped sessions, changed privileges, and uninterruptible OS operations are outside cleanup guarantees. Windows subprocess dispatch is unsupported; queue/planning commands remain available.
 
-- pass all needed inputs through the task id, files, or environment variables you control;
-- write outputs under a configured demo/runtime directory;
-- prefer idempotent commands;
-- set a timeout that matches the expected task size;
-- inspect `status` and `events` after dispatch.
+Ctrl-C attempts cleanup of every owned worker, even if one cleanup fails. Cleanup failures are reported and remain inspectable; a still-live worker is not marked stopped. Abrupt failure can leave unfinished attempts requiring [explicit recovery](batches-and-recovery.md#interruption-and-recovery).
 
-For detached session management and contained workspaces, see
-[Local Agent Task Runtime](https://github.com/matchalatteguy/local-agent-task-runtime).
-Long-running services and distributed worker pools are outside this package's scope.
+## Results
+
+Dispatch prints JSON with `started`, `completed`, `failed`, `cancelled`, and `skipped_reason`. Exit `0` means the selected work/preview passed or no eligible tasks were selected; `1` reports selected failure/cancellation or a CLI operation error, `2` blocked capacity/budget, and `130` Ctrl-C. Inspect `status` for remaining delayed tasks; success of one batch is not proof the whole queue is empty.
+
+See [batch manifests, retry, logs, and recovery](batches-and-recovery.md). Templates still support [recurring depth-based replenishment](scheduler-policy.md), independently of finite command batches.

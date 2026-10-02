@@ -139,7 +139,7 @@ Failed subprocesses mark the task as `failed` and store the tail of stderr/stdou
 uv run agent-backlog events --db .agent-backlog/tasks.sqlite3 --limit 20
 ```
 
-The built-in dispatcher is synchronous. A long command blocks the current CLI process until it exits or times out.
+The CLI stays open while bounded workers run concurrently. Inspect `attempts` and `logs TASK_ID --stream stderr` for full retained output below the configured cap; events contain only a short tail. Repair inputs, use `retry TASK_ID` or `retry --failed`, then dispatch again. Commands are not retried automatically.
 
 ## Stale tasks appear
 
@@ -149,7 +149,7 @@ Stale tasks are `running` tasks whose latest update/heartbeat is older than the 
 uv run agent-backlog stale --db .agent-backlog/tasks.sqlite3 --after 30m
 ```
 
-This command reports stale tasks only. It does not kill workers or requeue tasks automatically. Use `agent-backlog mark TASK_ID --status todo|failed|blocked` after you decide whether to retry, fail, or investigate the task.
+This command reports stale tasks only. Inspect their `attempts` and side effects, then use `recover TASK_ID` after recorded processes are gone. Recovery refuses live PIDs/groups, never kills a saved PID, and does not requeue by itself. A separate `retry` schedules more work within its budget. Unknown worker identities need explicit inspection and `--acknowledge-unknown`. See [recovery](batches-and-recovery.md#interruption-and-recovery); direct status edits are unsuitable for managed attempts.
 
 ## Start the demo over
 

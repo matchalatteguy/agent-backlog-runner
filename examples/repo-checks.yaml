@@ -1,0 +1,17 @@
+schema_version: 1
+name: repo-checks
+tasks:
+  - id: unit-tests
+    title: Run the repository test suite
+    argv: ['{python}', '-m', pytest, '-q']
+    workdir: '.'
+    timeout_seconds: 600
+    max_attempts: 3
+    retry_backoff_seconds: 2
+  - id: lint-check
+    title: Check Python style and imports
+    argv: ['{python}', '-m', ruff, check, '.']
+    workdir: '.'
+    timeout_seconds: 120
+    max_attempts: 3
+    retry_backoff_seconds: 2

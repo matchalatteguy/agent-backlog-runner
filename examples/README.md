@@ -1,5 +1,7 @@
 # Examples
 
+For real repository check commands, start with [`repo-checks.yaml`](repo-checks.yaml): it runs pytest and Ruff with your project interpreter, bounded parallelism, and explicit retry budgets. Install that project's dependencies before loading it. The packaged `agent-backlog demo --output .agent-backlog/maintenance-demo` demonstrates unit tests, syntax checks, a missing-document failure, repair, explicit retry, and resuming without repeating successful checks. See [batch manifests](../docs/batches-and-recovery.md).
+
 The examples are synthetic and safe to run locally. They show queue mechanics, not domain-specific automation. Use them as starting points for your own local maintenance, documentation, or agent-demo queues.
 
 ## Files

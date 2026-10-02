@@ -14,6 +14,7 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -29,14 +30,42 @@ jobs:
       - name: Lint and test
         run: |
           uv run --no-sync ruff check .
+          uv run --no-sync ruff format --check .
           uv run --no-sync pytest
       - name: Build and verify installed wheel outside the checkout
         run: |
-          uv build --no-sources
+          uv build --no-sources --out-dir .agent-backlog/dist
           uv venv --python "${{ matrix.python }}" .wheel-smoke
-          uv pip install --python .wheel-smoke/bin/python dist/*.whl
+          uv pip install --python .wheel-smoke/bin/python .agent-backlog/dist/*.whl
           smoke_python="$PWD/.wheel-smoke/bin/python"
           smoke_dir=$(mktemp -d)
           cd "$smoke_dir"
           "$smoke_python" -m agent_backlog_runner.demo --output demo
           "$smoke_python" -m agent_backlog_runner.cli status --db demo/tasks.sqlite3 --format json
+          "$smoke_python" -m agent_backlog_runner.cli --version
+          "$smoke_python" -m agent_backlog_runner.cli demo --output maintenance
+          "$smoke_python" -m agent_backlog_runner.cli status --db maintenance/checks.sqlite3 --format json
+  macos-processes:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14'
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Install dependencies
+        run: uv sync --locked --extra dev --python 3.14
+      - name: Check attempts, parallel workers, recovery and process groups
+        run: uv run --no-sync pytest tests/test_batch_execution.py tests/test_dispatch.py
+      - name: Verify installed repair demo outside the checkout
+        run: |
+          uv build --no-sources --out-dir .agent-backlog/dist
+          uv venv --python 3.14 .wheel-smoke
+          uv pip install --python .wheel-smoke/bin/python .agent-backlog/dist/*.whl
+          smoke_python="$PWD/.wheel-smoke/bin/python"
+          smoke_dir=$(mktemp -d)
+          cd "$smoke_dir"
+          "$smoke_python" -m agent_backlog_runner.cli --version
+          "$smoke_python" -m agent_backlog_runner.cli demo --output maintenance
+          "$smoke_python" -m agent_backlog_runner.cli status --db maintenance/checks.sqlite3 --format json

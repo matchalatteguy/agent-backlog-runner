@@ -79,4 +79,4 @@ uv run agent-backlog stale --db .agent-backlog/tasks.sqlite3 --after 30m
 uv run agent-backlog stale --db .agent-backlog/tasks.sqlite3 --after 30m --format json
 ```
 
-The command prints stale task ids and their age in seconds. It does not change task status; callers decide whether to retry, mark failed, or investigate.
+The command prints stale task ids and their age in seconds. It does not change task status or prove workers are gone. Managed work needs [explicit recovery](batches-and-recovery.md#interruption-and-recovery), followed by a separate bounded retry if appropriate.
